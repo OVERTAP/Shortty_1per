@@ -1,90 +1,61 @@
 import ccxt
-import json
 import os
-import telegram
 import asyncio
-from datetime import datetime
-import logging
+from telegram import Bot
 from dotenv import load_dotenv
 
-# .env 파일 로드
+# 환경 변수 로드
 load_dotenv()
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-# 로깅 설정
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# KuCoin 거래소 설정 (API 키 없이)
+exchange = ccxt.kucoin({
+    'enableRateLimit': True,  # 속도 제한 준수
+})
 
-# 텔레그램 봇 초기화
-bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-chat_id = os.getenv('TELEGRAM_CHAT_ID')
-if not bot_token or not chat_id:
-    logging.error("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set in .env file")
-    exit(1)
-bot = telegram.Bot(token=bot_token)
-CHAT_ID = chat_id
-
-# 관심 종목 저장소
-WATCHLIST_FILE = 'watchlist.json'
-
-def load_watchlist():
-    try:
-        with open(WATCHLIST_FILE, 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return []
-
-def save_watchlist(watchlist):
-    with open(WATCHLIST_FILE, 'w') as f:
-        json.dump(watchlist, f)
-
-async def send_telegram_message(message):
-    await bot.send_message(chat_id=CHAT_ID, text=message)
-
-# 텔레그램 메시지 핸들러
-async def handle_telegram_updates():
-    updates = await bot.get_updates(timeout=10)
-    watchlist = load_watchlist()
-    for update in updates:
-        if update.message and update.message.text:
-            ticker = update.message.text.strip().upper()
-            symbol = f"{ticker}/USDT"
-            if symbol not in watchlist:
-                watchlist.append(symbol)
-                save_watchlist(watchlist)
-                await send_telegram_message(f"Added {symbol} to watchlist")
-    # 오프셋 업데이트
-    if updates:
-        await bot.get_updates(offset=updates[-1].update_id + 1)
+# 텔레그램 봇 설정
+bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
 async def main():
-    # 바이낸스 선물 시장 초기화
-    exchange = ccxt.binance({
-        'enableRateLimit': True,
-        'options': {'defaultType': 'future'}
-    })
+    try:
+        # 시장 데이터 로드 (공개 API 사용)
+        markets = exchange.load_markets()
+        print(f"Loaded {len(markets)} markets from KuCoin")
 
-    # 종목 조회
-    markets = exchange.load_markets()
-    symbols = [symbol for symbol in markets.keys() if ':USDT' not in symbol and symbol.endswith('/USDT')]
-    logging.info(f"Found {len(symbols)} trading symbols")
+        # 선물 종목 필터링 (KuCoin에서는 'future' 타입 확인)
+        futures_markets = {symbol: market for symbol, market in markets.items() if market['type'] == 'future'}
+        print(f"Found {len(futures_markets)} futures markets")
 
-    # 관심 종목 로드
-    watchlist = load_watchlist()
+        # 1시간봉 데이터 조회 및 알림 로직
+        for symbol in futures_markets:
+            try:
+                # 1시간봉(OHLCV) 데이터 가져오기 (공개 API 사용)
+                ohlcv = exchange.fetch_ohlcv(symbol, timeframe='1h', limit=2)
+                if len(ohlcv) < 2:
+                    continue
 
-    # 텔레그램 업데이트 처리
-    await handle_telegram_updates()
-
-    # 관심 종목 가격 감시
-    for symbol in watchlist:
-        try:
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe='1h', limit=2)
-            if len(ohlcv) >= 2:
+                # 최근 캔들 두 개 비교
                 prev_close = ohlcv[-2][4]  # 이전 캔들 종가
                 current_close = ohlcv[-1][4]  # 현재 캔들 종가
                 change_percent = ((current_close - prev_close) / prev_close) * 100
+
+                # 1% 이상 하락 시 알림
                 if change_percent <= -1:
-                    await send_telegram_message(f"{symbol} 1h candle dropped by {abs(change_percent):.2f}%")
-        except Exception as e:
-            logging.error(f"Error monitoring {symbol}: {str(e)}")
+                    message = f"{symbol} 1h candle dropped by {abs(change_percent):.2f}%"
+                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+                    print(f"Sent alert: {message}")
+
+                # 속도 제한 준수를 위해 잠시 대기
+                await asyncio.sleep(1)
+
+            except Exception as e:
+                print(f"Error processing {symbol}: {str(e)}")
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=f"Error with {symbol}: {str(e)}")
+
+    except Exception as e:
+        print(f"Error loading markets: {str(e)}")
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=f"Error in KuCoin script: {str(e)}")
 
 if __name__ == "__main__":
     asyncio.run(main())
