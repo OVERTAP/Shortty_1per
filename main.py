@@ -5,13 +5,22 @@ import telegram
 import asyncio
 from datetime import datetime
 import logging
+from dotenv import load_dotenv
+
+# .env 파일 로드
+load_dotenv()
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 텔레그램 봇 초기화
-bot = telegram.Bot(token=os.environ['TELEGRAM_BOT_TOKEN'])
-CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
+bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+chat_id = os.getenv('TELEGRAM_CHAT_ID')
+if not bot_token or not chat_id:
+    logging.error("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set in .env file")
+    exit(1)
+bot = telegram.Bot(token=bot_token)
+CHAT_ID = chat_id
 
 # 관심 종목 저장소
 WATCHLIST_FILE = 'watchlist.json'
