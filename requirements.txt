@@ -1,2 +1,3 @@
 ccxt==4.4.86
 python-telegram-bot==21.4
+python-dotenv==1.0.2
