@@ -73,7 +73,7 @@ async def add_symbol(update: Update, context):
     symbol = f"{ticker}/USDT"
     
     markets = exchange.load_markets()
-    if symbol not in markets or markets[symbol]['type'] != 'future':
+    if symbol not in markets or markets[symbol]['type'] != 'swap':
         await update.message.reply_text(f"{symbol}은(는) KuCoin 선물 시장에 존재하지 않습니다.")
         return
 
@@ -92,7 +92,7 @@ async def monitor():
         # KuCoin 선물 시장 데이터 로드
         markets = exchange.load_markets()
         futures_markets = {symbol: market for symbol, market in markets.items() 
-                          if market['type'] == 'future' and not symbol.endswith(":USDT")}
+                          if market['type'] == 'swap' and not symbol.endswith(":USDT")}
         print(f"Found {len(futures_markets)} futures markets on KuCoin")
 
         # 관심 종목 감시
@@ -138,26 +138,21 @@ async def monitor():
         print(f"Error loading markets: {str(e)}")
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=f"Error in KuCoin script: {str(e)}")
 
-# 텔레그램 봇 핸들러 등록 및 실행
-def main():
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("watchlist", show_watchlist))
-    app.add_handler(CallbackQueryHandler(remove_symbol, pattern='^remove:.*'))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_symbol))
+# 비동기 메인 함수
+async def main():
+    # 텔레그램 봇 초기화 및 실행
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
 
-    # 봇 실행 및 감시 루프
-    loop = asyncio.get_event_loop()
-    loop.create_task(app.initialize())
-    loop.create_task(app.start())
-    loop.create_task(app.updater.start_polling())
+    # 감시 로직 실행
+    await monitor()
 
-    # 5분마다 감시 (GitHub Actions에서 이미 5분마다 실행되므로 루프 불필요)
-    loop.run_until_complete(monitor())
-
-    # 봇 종료
-    loop.run_until_complete(app.updater.stop())
-    loop.run_until_complete(app.stop())
-    loop.run_until_complete(app.shutdown())
+    # 텔레그램 봇 종료
+    await app.updater.stop()
+    await app.stop()
+    await app.shutdown()
 
 if __name__ == "__main__":
-    main()
+    # asyncio.run()으로 비동기 실행
+    asyncio.run(main())
