@@ -1,2 +1,2 @@
-ccxt==4.3.0
+ccxt==4.4.86
 python-telegram-bot==21.4
