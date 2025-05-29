@@ -33,7 +33,7 @@ def git_pull():
 
 # 관심 종목 로드
 def load_watchlist():
-    git_pull()  # 최신 상태 동기화
+    git_pull()
     try:
         with open(WATCHLIST_FILE, 'r') as f:
             return json.load(f)
@@ -44,8 +44,13 @@ async def monitor():
     try:
         # KuCoin 선물 시장 데이터 로드
         markets = exchange.load_markets()
+        
+        # 선물 종목 필터링 및 총 개수 출력
         futures_markets = {symbol: market for symbol, market in markets.items() 
                           if market['type'] == 'swap' and not symbol.endswith(":USDT")}
+        print(f"Total number of trading symbols in KuCoin futures market: {len(futures_markets)}")
+        
+        # 기존 감시 로직
         print(f"Found {len(futures_markets)} futures markets on KuCoin")
 
         # 관심 종목 감시
