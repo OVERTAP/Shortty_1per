@@ -48,6 +48,8 @@ async def monitor():
         # 선물 종목 필터링 및 총 개수 출력
         futures_markets = {symbol: market for symbol, market in markets.items() 
                           if market['type'] == 'swap' and not symbol.endswith(":USDT")}
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
+                              text=f"Total number of trading symbols in KuCoin futures market: {len(futures_markets)}")
         print(f"Total number of trading symbols in KuCoin futures market: {len(futures_markets)}")
         
         # 기존 감시 로직
