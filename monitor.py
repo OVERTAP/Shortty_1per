@@ -44,16 +44,30 @@ async def monitor():
     try:
         # KuCoin 선물 시장 데이터 로드
         markets = exchange.load_markets()
-        
-        # 선물 종목 필터링 및 총 개수 출력
+        print(f"Total markets loaded: {len(markets)}")
+
+        # 디버깅: market 타입 확인
+        market_types = set(market['type'] for market in markets.values())
+        print(f"Market types found: {market_types}")
+
+        # 선물 종목 필터링 (type을 'future'로 변경)
         futures_markets = {symbol: market for symbol, market in markets.items() 
-                          if market['type'] == 'swap' and not symbol.endswith(":USDT")}
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
-                              text=f"Total number of trading symbols in KuCoin futures market: {len(futures_markets)}")
-        print(f"Total number of trading symbols in KuCoin futures market: {len(futures_markets)}")
+                          if market['type'] == 'future' and not symbol.endswith(":USDT")}
         
+        # 종목 총 개수 출력
+        total_symbols = len(futures_markets)
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
+                              text=f"Total number of trading symbols in KuCoin futures market: {total_symbols}")
+        print(f"Total number of trading symbols in KuCoin futures market: {total_symbols}")
+
+        # 추가 디버깅: 필터링된 종목 목록 출력
+        if total_symbols == 0:
+            print("No futures markets found. Checking symbol formats...")
+            for symbol, market in list(markets.items())[:5]:  # 상위 5개만 출력
+                print(f"Symbol: {symbol}, Type: {market['type']}")
+
         # 기존 감시 로직
-        print(f"Found {len(futures_markets)} futures markets on KuCoin")
+        print(f"Found {total_symbols} futures markets on KuCoin")
 
         # 관심 종목 감시
         watchlist = load_watchlist()
