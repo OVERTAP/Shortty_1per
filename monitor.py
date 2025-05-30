@@ -12,12 +12,9 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-# KuCoin 거래소 설정 - 선물 마켓 접근을 위한 옵션 추가
+# KuCoin 거래소 설정 - 스팟 마켓 사용
 exchange = ccxt.kucoin({
     'enableRateLimit': True,
-    'options': {
-        'defaultType': 'swap',  # 선물/스왑 마켓 접근을 위한 설정
-    }
 })
 
 # 텔레그램 봇 설정
@@ -59,29 +56,24 @@ async def monitor():
         
         print(f"Market types found: {market_types}")
 
-        # 선물/스왑 종목 필터링 (KuCoin 선물 심볼 형식)
-        futures_markets = {}
+        # 스팟 종목 필터링
+        spot_markets = {}
         for symbol, market in markets.items():
             market_type = market.get('type', '')
-            # KuCoin 선물은 주로 'swap' 타입이고 'M'으로 끝나는 심볼 사용
-            if market_type in ['swap', 'future']:
-                # 무기한 선물(perpetual) 필터링 - 만료일이 없어야 함
-                if not market.get('expiry'):
-                    # KuCoin 선물 심볼 패턴 확인 (예: XBTUSDTM, ETHUSDTM 등)
-                    if (symbol.endswith('USDTM') or symbol.endswith('USDM') or 
-                        '/USDT' in symbol):
-                        futures_markets[symbol] = market
+            # 스팟 마켓이고 USDT 페어인 종목만 필터링
+            if market_type == 'spot' and '/USDT' in symbol:
+                spot_markets[symbol] = market
         
         # 종목 총 개수 출력
-        total_symbols = len(futures_markets)
-        message = f"Total number of trading symbols in KuCoin futures market: {total_symbols}"
+        total_symbols = len(spot_markets)
+        message = f"Total number of trading symbols in KuCoin spot market: {total_symbols}"
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
         print(message)
 
         # 추가 디버깅: 필터링된 종목 목록 일부 출력
         if total_symbols > 0:
-            sample_symbols = list(futures_markets.keys())[:10]  # 상위 10개만 출력
-            sample_message = f"Sample futures symbols: {', '.join(sample_symbols)}"
+            sample_symbols = list(spot_markets.keys())[:10]  # 상위 10개만 출력
+            sample_message = f"Sample spot symbols: {', '.join(sample_symbols)}"
             print(sample_message)
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=sample_message)
         else:
@@ -97,7 +89,7 @@ async def monitor():
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=debug_message)
 
         # 기존 감시 로직
-        print(f"Found {total_symbols} futures markets on KuCoin")
+        print(f"Found {total_symbols} spot markets on KuCoin")
 
         # 관심 종목 감시
         watchlist = load_watchlist()
