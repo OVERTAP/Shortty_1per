@@ -59,15 +59,18 @@ async def monitor():
         
         print(f"Market types found: {market_types}")
 
-        # 선물/스왑 종목 필터링 (여러 타입 지원)
+        # 선물/스왑 종목 필터링 (KuCoin 선물 심볼 형식)
         futures_markets = {}
         for symbol, market in markets.items():
             market_type = market.get('type', '')
-            # KuCoin에서는 선물이 'swap' 타입일 수 있음
-            if market_type in ['swap', 'future'] and '/USDT' in symbol:
-                # 만료일이 없는 무기한 선물(perpetual) 필터링
+            # KuCoin 선물은 주로 'swap' 타입이고 'M'으로 끝나는 심볼 사용
+            if market_type in ['swap', 'future']:
+                # 무기한 선물(perpetual) 필터링 - 만료일이 없어야 함
                 if not market.get('expiry'):
-                    futures_markets[symbol] = market
+                    # KuCoin 선물 심볼 패턴 확인 (예: XBTUSDTM, ETHUSDTM 등)
+                    if (symbol.endswith('USDTM') or symbol.endswith('USDM') or 
+                        '/USDT' in symbol):
+                        futures_markets[symbol] = market
         
         # 종목 총 개수 출력
         total_symbols = len(futures_markets)
