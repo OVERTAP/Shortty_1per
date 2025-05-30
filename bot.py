@@ -12,9 +12,12 @@ from dotenv import load_dotenv
 load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
-# KuCoin 거래소 설정
+# KuCoin 거래소 설정 - 선물 마켓 접근을 위한 옵션 추가
 exchange = ccxt.kucoin({
     'enableRateLimit': True,
+    'options': {
+        'defaultType': 'swap',  # 선물/스왑 마켓 접근을 위한 설정
+    }
 })
 
 # 관심 종목 저장 파일
@@ -91,19 +94,33 @@ async def add_symbol(update: Update, context):
     ticker = update.message.text.strip().upper()
     symbol = f"{ticker}/USDT"
     
-    markets = exchange.load_markets()
-    if symbol not in markets or markets[symbol]['type'] != 'swap':
-        await update.message.reply_text(f"{symbol}은(는) KuCoin 선물 시장에 존재하지 않습니다.")
-        return
+    try:
+        markets = exchange.load_markets()
+        
+        # 심볼이 존재하고 선물/스왑 마켓인지 확인
+        if symbol not in markets:
+            await update.message.reply_text(f"{symbol}은(는) KuCoin에 존재하지 않습니다.")
+            return
+        
+        market = markets[symbol]
+        market_type = market.get('type', '')
+        
+        # 선물/스왑 마켓이고 무기한 선물인지 확인
+        if market_type not in ['swap', 'future'] or market.get('expiry'):
+            await update.message.reply_text(f"{symbol}은(는) KuCoin 무기한 선물 시장에 존재하지 않습니다.")
+            return
 
-    watchlist = load_watchlist()
-    if symbol in watchlist:
-        await update.message.reply_text(f"{symbol}은(는) 이미 관심 종목에 있습니다.")
-        return
+        watchlist = load_watchlist()
+        if symbol in watchlist:
+            await update.message.reply_text(f"{symbol}은(는) 이미 관심 종목에 있습니다.")
+            return
 
-    watchlist.append(symbol)
-    save_watchlist(watchlist)
-    await update.message.reply_text(f"{symbol}이(가) 관심 종목에 추가되었습니다.")
+        watchlist.append(symbol)
+        save_watchlist(watchlist)
+        await update.message.reply_text(f"{symbol}이(가) 관심 종목에 추가되었습니다.")
+
+    except Exception as e:
+        await update.message.reply_text(f"오류가 발생했습니다: {str(e)}")
 
 async def main():
     # 텔레그램 봇 핸들러 등록
