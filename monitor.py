@@ -12,9 +12,12 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-# KuCoin 거래소 설정
+# KuCoin 거래소 설정 - 선물 마켓 접근을 위한 옵션 추가
 exchange = ccxt.kucoin({
     'enableRateLimit': True,
+    'options': {
+        'defaultType': 'swap',  # 선물/스왑 마켓 접근을 위한 설정
+    }
 })
 
 # 텔레그램 봇 설정
@@ -47,24 +50,48 @@ async def monitor():
         print(f"Total markets loaded: {len(markets)}")
 
         # 디버깅: market 타입 확인
-        market_types = set(market['type'] for market in markets.values())
+        market_types = {}
+        for symbol, market in markets.items():
+            market_type = market.get('type', 'unknown')
+            if market_type not in market_types:
+                market_types[market_type] = 0
+            market_types[market_type] += 1
+        
         print(f"Market types found: {market_types}")
 
-        # 선물 종목 필터링 (type을 'future'로 변경)
-        futures_markets = {symbol: market for symbol, market in markets.items() 
-                          if market['type'] == 'future' and not symbol.endswith(":USDT")}
+        # 선물/스왑 종목 필터링 (여러 타입 지원)
+        futures_markets = {}
+        for symbol, market in markets.items():
+            market_type = market.get('type', '')
+            # KuCoin에서는 선물이 'swap' 타입일 수 있음
+            if market_type in ['swap', 'future'] and '/USDT' in symbol:
+                # 만료일이 없는 무기한 선물(perpetual) 필터링
+                if not market.get('expiry'):
+                    futures_markets[symbol] = market
         
         # 종목 총 개수 출력
         total_symbols = len(futures_markets)
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
-                              text=f"Total number of trading symbols in KuCoin futures market: {total_symbols}")
-        print(f"Total number of trading symbols in KuCoin futures market: {total_symbols}")
+        message = f"Total number of trading symbols in KuCoin futures market: {total_symbols}"
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+        print(message)
 
-        # 추가 디버깅: 필터링된 종목 목록 출력
-        if total_symbols == 0:
+        # 추가 디버깅: 필터링된 종목 목록 일부 출력
+        if total_symbols > 0:
+            sample_symbols = list(futures_markets.keys())[:10]  # 상위 10개만 출력
+            sample_message = f"Sample futures symbols: {', '.join(sample_symbols)}"
+            print(sample_message)
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=sample_message)
+        else:
             print("No futures markets found. Checking symbol formats...")
-            for symbol, market in list(markets.items())[:5]:  # 상위 5개만 출력
-                print(f"Symbol: {symbol}, Type: {market['type']}")
+            # 디버깅을 위해 모든 마켓 타입별 샘플 출력
+            debug_info = []
+            for market_type, count in market_types.items():
+                sample_symbols = [s for s, m in markets.items() if m.get('type') == market_type][:3]
+                debug_info.append(f"{market_type} ({count}): {sample_symbols}")
+            
+            debug_message = "Market type samples:\n" + "\n".join(debug_info)
+            print(debug_message)
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=debug_message)
 
         # 기존 감시 로직
         print(f"Found {total_symbols} futures markets on KuCoin")
@@ -77,6 +104,13 @@ async def monitor():
 
         for symbol in watchlist:
             try:
+                # 심볼이 실제로 존재하는지 확인
+                if symbol not in markets:
+                    print(f"Symbol {symbol} not found in markets")
+                    continue
+
+                print(f"Processing {symbol}...")
+
                 # 1시간봉 데이터 (1% 음봉 감지)
                 ohlcv_1h = exchange.fetch_ohlcv(symbol, timeframe='1h', limit=2)
                 if len(ohlcv_1h) < 2:
