@@ -89,18 +89,50 @@ async def remove_symbol(update: Update, context):
     else:
         await query.message.reply_text(f"{symbol}은(는) 관심 종목에 없습니다.")
 
+# KuCoin 선물 심볼 매핑
+FUTURES_SYMBOL_MAP = {
+    'BTC': 'XBTUSDTM',
+    'ETH': 'ETHUSDTM', 
+    'ADA': 'ADAUSDTM',
+    'LTC': 'LTCUSDTM',
+    'XRP': 'XRPUSDTM',
+    'DOT': 'DOTUSDTM',
+    'LINK': 'LINKUSDTM',
+    'BCH': 'BCHUSDTM',
+    'UNI': 'UNIUSDTM',
+    'SOL': 'SOLUSDTM',
+    'MATIC': 'MATICUSDTM',
+    'AVAX': 'AVAXUSDTM',
+    'ATOM': 'ATOMUSDTM',
+    'FTM': 'FTMUSDTM',
+    'NEAR': 'NEARUSDTM',
+}
+
 # 관심 종목 추가 (티커 입력 처리)
 async def add_symbol(update: Update, context):
     ticker = update.message.text.strip().upper()
-    symbol = f"{ticker}/USDT"
     
     try:
         markets = exchange.load_markets()
         
-        # 심볼이 존재하고 선물/스왑 마켓인지 확인
-        if symbol not in markets:
-            await update.message.reply_text(f"{symbol}은(는) KuCoin에 존재하지 않습니다.")
-            return
+        # 1. 매핑된 선물 심볼 확인
+        futures_symbol = FUTURES_SYMBOL_MAP.get(ticker)
+        if futures_symbol and futures_symbol in markets:
+            symbol = futures_symbol
+        else:
+            # 2. 일반적인 형태 확인 (TICKER + USDTM)
+            potential_symbol = f"{ticker}USDTM"
+            if potential_symbol in markets:
+                symbol = potential_symbol
+            else:
+                # 3. 스팟 형태로도 확인
+                spot_symbol = f"{ticker}/USDT"
+                if spot_symbol in markets:
+                    await update.message.reply_text(f"{spot_symbol}은(는) 스팟 마켓입니다. 선물 마켓을 찾을 수 없습니다.")
+                    return
+                else:
+                    await update.message.reply_text(f"{ticker}에 해당하는 KuCoin 선물 상품을 찾을 수 없습니다.")
+                    return
         
         market = markets[symbol]
         market_type = market.get('type', '')
