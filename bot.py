@@ -12,12 +12,9 @@ from dotenv import load_dotenv
 load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
-# KuCoin 거래소 설정 - 선물 마켓 접근을 위한 옵션 추가
+# KuCoin 거래소 설정 - 스팟 마켓 사용
 exchange = ccxt.kucoin({
     'enableRateLimit': True,
-    'options': {
-        'defaultType': 'swap',  # 선물/스왑 마켓 접근을 위한 설정
-    }
 })
 
 # 관심 종목 저장 파일
@@ -59,8 +56,8 @@ def save_watchlist(watchlist):
 
 # 시작 명령어 (/start)
 async def start(update: Update, context):
-    await update.message.reply_text("KuCoin Futures Monitor 봇입니다.\n"
-                                    "종목 티커(예: ETH)를 입력해 관심 종목을 추가하세요.\n"
+    await update.message.reply_text("KuCoin Spot Monitor 봇입니다.\n"
+                                    "종목 티커(예: BTC, ETH, MOVE)를 입력해 관심 종목을 추가하세요.\n"
                                     "관심 종목은 5분마다 감시되며, 1시간봉 1% 이상 음봉 시 알림을 보냅니다.\n"
                                     "30분봉 기준 이전 음봉 캔들 고점 돌파 시에도 알림을 보냅니다.\n"
                                     "/watchlist로 관심 종목 목록을 확인하세요.")
@@ -89,57 +86,25 @@ async def remove_symbol(update: Update, context):
     else:
         await query.message.reply_text(f"{symbol}은(는) 관심 종목에 없습니다.")
 
-# KuCoin 선물 심볼 매핑
-FUTURES_SYMBOL_MAP = {
-    'BTC': 'XBTUSDTM',
-    'ETH': 'ETHUSDTM', 
-    'ADA': 'ADAUSDTM',
-    'LTC': 'LTCUSDTM',
-    'XRP': 'XRPUSDTM',
-    'DOT': 'DOTUSDTM',
-    'LINK': 'LINKUSDTM',
-    'BCH': 'BCHUSDTM',
-    'UNI': 'UNIUSDTM',
-    'SOL': 'SOLUSDTM',
-    'MATIC': 'MATICUSDTM',
-    'AVAX': 'AVAXUSDTM',
-    'ATOM': 'ATOMUSDTM',
-    'FTM': 'FTMUSDTM',
-    'NEAR': 'NEARUSDTM',
-}
-
 # 관심 종목 추가 (티커 입력 처리)
 async def add_symbol(update: Update, context):
     ticker = update.message.text.strip().upper()
+    symbol = f"{ticker}/USDT"
     
     try:
         markets = exchange.load_markets()
         
-        # 1. 매핑된 선물 심볼 확인
-        futures_symbol = FUTURES_SYMBOL_MAP.get(ticker)
-        if futures_symbol and futures_symbol in markets:
-            symbol = futures_symbol
-        else:
-            # 2. 일반적인 형태 확인 (TICKER + USDTM)
-            potential_symbol = f"{ticker}USDTM"
-            if potential_symbol in markets:
-                symbol = potential_symbol
-            else:
-                # 3. 스팟 형태로도 확인
-                spot_symbol = f"{ticker}/USDT"
-                if spot_symbol in markets:
-                    await update.message.reply_text(f"{spot_symbol}은(는) 스팟 마켓입니다. 선물 마켓을 찾을 수 없습니다.")
-                    return
-                else:
-                    await update.message.reply_text(f"{ticker}에 해당하는 KuCoin 선물 상품을 찾을 수 없습니다.")
-                    return
+        # 심볼이 존재하고 스팟 마켓인지 확인
+        if symbol not in markets:
+            await update.message.reply_text(f"{symbol}은(는) KuCoin에 존재하지 않습니다.")
+            return
         
         market = markets[symbol]
         market_type = market.get('type', '')
         
-        # 선물/스왑 마켓이고 무기한 선물인지 확인
-        if market_type not in ['swap', 'future'] or market.get('expiry'):
-            await update.message.reply_text(f"{symbol}은(는) KuCoin 무기한 선물 시장에 존재하지 않습니다.")
+        # 스팟 마켓인지 확인
+        if market_type != 'spot':
+            await update.message.reply_text(f"{symbol}은(는) 스팟 마켓이 아닙니다. (타입: {market_type})")
             return
 
         watchlist = load_watchlist()
