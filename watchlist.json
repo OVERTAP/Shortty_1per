@@ -1,7 +1,7 @@
 [
-    "BTC/USDT",
-    "ETH/USDT",
-    "SOL/USDT",
-    "ADA/USDT",
-    "DOT/USDT"
+    "BTC_USDT",
+    "ETH_USDT",
+    "SOL_USDT",
+    "ADA_USDT",
+    "DOT_USDT"
 ]
