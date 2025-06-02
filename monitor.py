@@ -65,8 +65,7 @@ async def monitor():
                 })
                 markets = exchange_public.load_markets()
                 print(f"Successfully loaded {len(markets)} markets (public access)")
-                global exchange
-                exchange = exchange_public  # 공개 접근으로 교체
+                exchange = exchange_public  # 공개 접근으로 교체 (global 선언 제거)
             except Exception as e2:
                 print(f"Failed to load markets even with public access: {e2}")
                 await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
