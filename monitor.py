@@ -12,8 +12,8 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-# Binance 거래소 설정
-exchange = ccxt.binance({
+# Bybit 거래소 설정 (지역 제한이 적음)
+exchange = ccxt.bybit({
     'enableRateLimit': True,
 })
 
@@ -42,7 +42,7 @@ def load_watchlist():
 
 async def monitor():
     try:
-        # Binance 선물 시장 데이터 로드
+        # Bybit 선물 시장 데이터 로드
         markets = exchange.load_markets()
         print(f"Total markets loaded: {len(markets)}")
 
@@ -50,15 +50,15 @@ async def monitor():
         market_types = set(market['type'] for market in markets.values())
         print(f"Market types found: {market_types}")
 
-        # 선물 종목 필터링 (Binance는 'future'가 아닌 'swap' 사용)
+        # 선물 종목 필터링 (Bybit는 'linear'와 'inverse' 사용)
         futures_markets = {symbol: market for symbol, market in markets.items() 
-                          if market['type'] == 'swap' and symbol.endswith('/USDT')}
+                          if market['type'] in ['linear', 'inverse'] and symbol.endswith('/USDT:USDT')}
         
         # 종목 총 개수 출력
         total_symbols = len(futures_markets)
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
-                              text=f"Total number of trading symbols in Binance futures market: {total_symbols}")
-        print(f"Total number of trading symbols in Binance futures market: {total_symbols}")
+                              text=f"Total number of trading symbols in Bybit futures market: {total_symbols}")
+        print(f"Total number of trading symbols in Bybit futures market: {total_symbols}")
 
         # 추가 디버깅: 필터링된 종목 목록 출력
         if total_symbols == 0:
@@ -67,7 +67,7 @@ async def monitor():
                 print(f"Symbol: {symbol}, Type: {market['type']}")
 
         # 기존 감시 로직
-        print(f"Found {total_symbols} futures markets on Binance")
+        print(f"Found {total_symbols} futures markets on Bybit")
 
         # 관심 종목 감시
         watchlist = load_watchlist()
@@ -110,7 +110,7 @@ async def monitor():
 
     except Exception as e:
         print(f"Error loading markets: {str(e)}")
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=f"Error in Binance script: {str(e)}")
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=f"Error in Bybit script: {str(e)}")
 
 if __name__ == "__main__":
     asyncio.run(monitor())
