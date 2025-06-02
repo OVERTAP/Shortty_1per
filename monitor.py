@@ -12,8 +12,8 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-# KuCoin 거래소 설정 - 스팟 마켓 사용
-exchange = ccxt.kucoin({
+# Binance 거래소 설정
+exchange = ccxt.binance({
     'enableRateLimit': True,
 })
 
@@ -42,54 +42,32 @@ def load_watchlist():
 
 async def monitor():
     try:
-        # KuCoin 선물 시장 데이터 로드
+        # Binance 선물 시장 데이터 로드
         markets = exchange.load_markets()
         print(f"Total markets loaded: {len(markets)}")
 
         # 디버깅: market 타입 확인
-        market_types = {}
-        for symbol, market in markets.items():
-            market_type = market.get('type', 'unknown')
-            if market_type not in market_types:
-                market_types[market_type] = 0
-            market_types[market_type] += 1
-        
+        market_types = set(market['type'] for market in markets.values())
         print(f"Market types found: {market_types}")
 
-        # 스팟 종목 필터링
-        spot_markets = {}
-        for symbol, market in markets.items():
-            market_type = market.get('type', '')
-            # 스팟 마켓이고 USDT 페어인 종목만 필터링
-            if market_type == 'spot' and '/USDT' in symbol:
-                spot_markets[symbol] = market
+        # 선물 종목 필터링 (Binance는 'future'가 아닌 'swap' 사용)
+        futures_markets = {symbol: market for symbol, market in markets.items() 
+                          if market['type'] == 'swap' and symbol.endswith('/USDT')}
         
         # 종목 총 개수 출력
-        total_symbols = len(spot_markets)
-        message = f"Total number of trading symbols in KuCoin spot market: {total_symbols}"
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
-        print(message)
+        total_symbols = len(futures_markets)
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
+                              text=f"Total number of trading symbols in Binance futures market: {total_symbols}")
+        print(f"Total number of trading symbols in Binance futures market: {total_symbols}")
 
-        # 추가 디버깅: 필터링된 종목 목록 일부 출력
-        if total_symbols > 0:
-            sample_symbols = list(spot_markets.keys())[:10]  # 상위 10개만 출력
-            sample_message = f"Sample spot symbols: {', '.join(sample_symbols)}"
-            print(sample_message)
-            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=sample_message)
-        else:
+        # 추가 디버깅: 필터링된 종목 목록 출력
+        if total_symbols == 0:
             print("No futures markets found. Checking symbol formats...")
-            # 디버깅을 위해 모든 마켓 타입별 샘플 출력
-            debug_info = []
-            for market_type, count in market_types.items():
-                sample_symbols = [s for s, m in markets.items() if m.get('type') == market_type][:3]
-                debug_info.append(f"{market_type} ({count}): {sample_symbols}")
-            
-            debug_message = "Market type samples:\n" + "\n".join(debug_info)
-            print(debug_message)
-            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=debug_message)
+            for symbol, market in list(markets.items())[:5]:  # 상위 5개만 출력
+                print(f"Symbol: {symbol}, Type: {market['type']}")
 
         # 기존 감시 로직
-        print(f"Found {total_symbols} spot markets on KuCoin")
+        print(f"Found {total_symbols} futures markets on Binance")
 
         # 관심 종목 감시
         watchlist = load_watchlist()
@@ -99,13 +77,6 @@ async def monitor():
 
         for symbol in watchlist:
             try:
-                # 심볼이 실제로 존재하는지 확인
-                if symbol not in markets:
-                    print(f"Symbol {symbol} not found in markets")
-                    continue
-
-                print(f"Processing {symbol}...")
-
                 # 1시간봉 데이터 (1% 음봉 감지)
                 ohlcv_1h = exchange.fetch_ohlcv(symbol, timeframe='1h', limit=2)
                 if len(ohlcv_1h) < 2:
@@ -139,7 +110,7 @@ async def monitor():
 
     except Exception as e:
         print(f"Error loading markets: {str(e)}")
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=f"Error in KuCoin script: {str(e)}")
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=f"Error in Binance script: {str(e)}")
 
 if __name__ == "__main__":
     asyncio.run(monitor())
