@@ -93,10 +93,50 @@ async def monitor():
         print(f"Found {len(swap_symbols)} USDT perpetual swap contracts")
         print(f"Found {len(usdt_symbols)} total USDT pairs")
         
-        # 상위 몇 개 SWAP 심볼 출력
+        # 모든 SWAP 심볼 출력 (텔레그램 메시지 형식으로 변환)
         if swap_symbols:
-            print(f"Sample SWAP symbols: {swap_symbols[:10]}")
+            print(f"All SWAP symbols: {swap_symbols}")
             futures_symbols = swap_symbols
+            # 텔레그램 메시지 형식으로 변환 (_USDT → :USDT)
+            formatted_symbols = [s.replace('_USDT', ':USDT') for s in swap_symbols]
+            # 텔레그램 메시지 길이 제한(4096자)을 고려해 분할
+            max_message_length = 4000
+            current_message = f"🏪 MEXC Futures Market Analysis:\n"
+            current_message += f"📊 Total USDT contracts: {len(futures_symbols)}\n"
+            current_message += f"🔍 Market types: {', '.join(market_types.keys())}\n"
+            current_message += f"📈 Market type counts: {dict(list(market_types.items())[:5])}\n"
+            current_message += f"✅ All USDT futures tickers:\n"
+
+            # 티커를 한 줄에 5개씩 출력
+            ticker_lines = []
+            for i in range(0, len(formatted_symbols), 5):
+                ticker_line = ', '.join(formatted_symbols[i:i+5])
+                ticker_lines.append(ticker_line)
+            
+            ticker_message = '\n'.join(ticker_lines)
+            if len(current_message) + len(ticker_message) <= max_message_length:
+                current_message += ticker_message
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=current_message)
+            else:
+                # 메시지 분할
+                current_message += "✅ All USDT futures tickers (part 1):\n"
+                part_messages = []
+                current_part = ""
+                for line in ticker_lines:
+                    if len(current_part) + len(line) + 1 <= max_message_length - len(current_message):
+                        current_part += line + "\n"
+                    else:
+                        part_messages.append(current_part.strip())
+                        current_part = line + "\n"
+                if current_part:
+                    part_messages.append(current_part.strip())
+                
+                # 첫 번째 메시지 전송
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=current_message + part_messages[0])
+                # 나머지 메시지 전송
+                for i, part in enumerate(part_messages[1:], 2):
+                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
+                                         text=f"✅ All USDT futures tickers (part {i}):\n{part}")
         else:
             print("No dedicated SWAP symbols found. Using USDT futures contracts...")
             futures_symbols = [s for s in usdt_symbols if any(keyword in s.upper() for keyword in ['_USDT', '/USDT']) and markets[s].get('type') in ['swap', 'future']]
@@ -105,20 +145,16 @@ async def monitor():
                 futures_symbols = usdt_symbols[:50]  # 상위 50개만 사용
                 print(f"Using top {len(futures_symbols)} USDT pairs as futures contracts")
 
-        # 총 개수 텔레그램으로 전송
-        total_symbols = len(futures_symbols)
-        message = f"🏪 MEXC Futures Market Analysis:\n"
-        message += f"📊 Total USDT contracts: {total_symbols}\n"
-        message += f"🔍 Market types: {', '.join(market_types.keys())}\n"
-        message += f"📈 Market type counts: {dict(list(market_types.items())[:5])}\n"
-        
-        if futures_symbols:
-            sample_symbols = [s.replace('_USDT', '').replace('/USDT', '') for s in futures_symbols[:5]]
-            message += f"✅ Sample tickers: {', '.join(sample_symbols)}"
-        else:
-            message += "❌ No suitable futures contracts found"
-            
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+            # 대체 심볼도 출력
+            formatted_symbols = [s.replace('_USDT', ':USDT').replace('/USDT', ':USDT') for s in futures_symbols]
+            message = f"🏪 MEXC Futures Market Analysis:\n"
+            message += f"📊 Total USDT contracts: {len(futures_symbols)}\n"
+            message += f"🔍 Market types: {', '.join(market_types.keys())}\n"
+            message += f"📈 Market type counts: {dict(list(market_types.items())[:5])}\n"
+            message += f"✅ All USDT futures tickers:\n"
+            message += '\n'.join([', '.join(formatted_symbols[i:i+5]) for i in range(0, len(formatted_symbols), 5)])
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+
         print(f"Sent MEXC market analysis to Telegram")
 
         # 관심 종목이 있다면 모니터링 실행
@@ -138,12 +174,13 @@ async def monitor():
                 print(f"Checking {symbol} on MEXC...")
                 
                 # 심볼이 실제로 존재하는지 확인
+                selected_symbol = symbol
                 if symbol not in markets:
                     # 대체 심볼 형태 시도
-                    alt_symbol = symbol.replace('/USDT', '_USDT').replace('-USDT-SWAP', '/USDT')
+                    alt_symbol = symbol.replace('/USDT', '_USDT').replace('-USDT-SWAP', '_USDT')
                     if alt_symbol in markets:
                         print(f"Using alternative symbol format: {alt_symbol}")
-                        symbol = alt_symbol
+                        selected_symbol = alt_symbol
                     else:
                         print(f"Warning: {symbol} not found in MEXC markets")
                         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
@@ -151,38 +188,40 @@ async def monitor():
                         continue
                 
                 # 선물 마켓인지 확인
-                if markets[symbol].get('type') != 'swap':
-                    print(f"Warning: {symbol} is not a futures contract")
+                market = markets[selected_symbol]
+                print(f"Symbol {selected_symbol}: type={market.get('type')}, active={market.get('active', True)}")
+                if market.get('type') != 'swap':
+                    print(f"Warning: {selected_symbol} is not a futures contract")
                     await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
-                                         text=f"❌ {symbol} is not a futures contract")
+                                         text=f"❌ {selected_symbol} is not a futures contract")
                     continue
                 
                 # 1시간봉 데이터 (1% 음봉 감지)
                 try:
-                    ohlcv_1h = exchange.fetch_ohlcv(symbol, timeframe='1h', limit=2)
+                    ohlcv_1h = exchange.fetch_ohlcv(selected_symbol, timeframe='1h', limit=2)
                     if len(ohlcv_1h) < 2:
-                        print(f"Not enough 1h data for {symbol}")
+                        print(f"Not enough 1h data for {selected_symbol}")
                         continue
                         
                     prev_close_1h = ohlcv_1h[-2][4]
                     current_close_1h = ohlcv_1h[-1][4]
                     change_percent_1h = ((current_close_1h - prev_close_1h) / prev_close_1h) * 100
                     
-                    print(f"{symbol} 1h change: {change_percent_1h:.2f}%")
+                    print(f"{selected_symbol} 1h change: {change_percent_1h:.2f}%")
                     
                     if change_percent_1h <= -1:
-                        ticker = symbol.split('/')[0] if '/' in symbol else symbol.split('_')[0]
+                        ticker = selected_symbol.split('/')[0] if '/' in selected_symbol else selected_symbol.split('_')[0]
                         message = f"🔴 MEXC Alert: {ticker}\n📉 1h drop: {abs(change_percent_1h):.2f}%\n💰 Price: ${current_close_1h:.6f}"
                         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
                         print(f"Sent 1h drop alert: {message}")
                 except Exception as e:
-                    print(f"Error fetching 1h data for {symbol}: {e}")
+                    print(f"Error fetching 1h data for {selected_symbol}: {e}")
 
                 # 30분봉 데이터 (이전 음봉 고점 돌파 감지)
                 try:
-                    ohlcv_30m = exchange.fetch_ohlcv(symbol, timeframe='30m', limit=2)
+                    ohlcv_30m = exchange.fetch_ohlcv(selected_symbol, timeframe='30m', limit=2)
                     if len(ohlcv_30m) < 2:
-                        print(f"Not enough 30m data for {symbol}")
+                        print(f"Not enough 30m data for {selected_symbol}")
                         continue
                         
                     prev_open_30m = ohlcv_30m[-2][1]
@@ -192,12 +231,12 @@ async def monitor():
                     
                     # 이전 캔들이 음봉이고 현재 가격이 이전 고점을 돌파했는지 확인
                     if prev_close_30m < prev_open_30m and current_close_30m > prev_high_30m:
-                        ticker = symbol.split('/')[0] if '/' in symbol else symbol.split('_')[0]
+                        ticker = selected_symbol.split('/')[0] if '/' in selected_symbol else selected_symbol.split('_')[0]
                         message = f"🟢 MEXC Alert: {ticker}\n📈 30m breakout above bearish high\n💰 Broke: ${prev_high_30m:.6f}\n💰 Current: ${current_close_30m:.6f}"
                         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
                         print(f"Sent breakout alert: {message}")
                 except Exception as e:
-                    print(f"Error fetching 30m data for {symbol}: {e}")
+                    print(f"Error fetching 30m data for {selected_symbol}: {e}")
 
                 await asyncio.sleep(0.5)  # API 레이트 리미트 방지
 
