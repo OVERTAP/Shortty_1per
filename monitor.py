@@ -3,7 +3,6 @@ import ccxt
 import os
 import asyncio
 import json
-import subprocess
 from telegram import Bot
 from dotenv import load_dotenv
 
@@ -30,21 +29,18 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 # 관심 종목 저장 파일
 WATCHLIST_FILE = "watchlist.json"
 
-# Git 동기화 함수
-def git_pull():
-    try:
-        subprocess.run(["git", "pull", "--rebase"], check=True)
-        print("Successfully pulled latest changes from GitHub")
-    except subprocess.CalledProcessError as e:
-        print(f"Error pulling from GitHub: {e}")
-
 # 관심 종목 로드
 def load_watchlist():
-    git_pull()
     try:
         with open(WATCHLIST_FILE, 'r') as f:
-            return json.load(f)
+            watchlist = json.load(f)
+            print(f"Loaded watchlist: {watchlist}")
+            return watchlist
     except FileNotFoundError:
+        print(f"Error: {WATCHLIST_FILE} not found")
+        return []
+    except json.JSONDecodeError as e:
+        print(f"Error decoding {WATCHLIST_FILE}: {e}")
         return []
 
 async def monitor():
@@ -57,7 +53,7 @@ async def monitor():
             print(f"Successfully loaded {len(markets)} markets from MEXC")
         except Exception as e:
             print(f"Error loading markets: {e}")
-            # API 키 없이도 공개 데이터는 접근 가능하도록 재시도
+            # API 키 없이 공개 접근 시도
             try:
                 exchange_public = ccxt.mexc({
                     'enableRateLimit': True,
@@ -65,7 +61,7 @@ async def monitor():
                 })
                 markets = exchange_public.load_markets()
                 print(f"Successfully loaded {len(markets)} markets (public access)")
-                exchange = exchange_public  # 공개 접근으로 교체 (global 선언 제거)
+                exchange = exchange_public  # 공개 접근으로 교체
             except Exception as e2:
                 print(f"Failed to load markets even with public access: {e2}")
                 await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
@@ -82,7 +78,7 @@ async def monitor():
             market_type = market.get('type', 'unknown')
             market_types[market_type] = market_types.get(market_type, 0) + 1
             
-            # MEXC 선물 계약 찾기 (여러 형태 지원)
+            # MEXC 선물 계약 찾기
             if (market_type == 'swap' and 
                 market.get('active', True) and
                 market.get('quote') == 'USDT'):
@@ -102,12 +98,10 @@ async def monitor():
             print(f"Sample SWAP symbols: {swap_symbols[:10]}")
             futures_symbols = swap_symbols
         else:
-            # SWAP이 없다면 USDT 페어 중에서 선물 계약 찾기
             print("No dedicated SWAP symbols found. Using USDT futures contracts...")
-            futures_symbols = [s for s in usdt_symbols if any(keyword in s.upper() for keyword in ['_USDT', '/USDT']) and market_types.get(markets[s].get('type')) and markets[s].get('type') in ['swap', 'future']]
+            futures_symbols = [s for s in usdt_symbols if any(keyword in s.upper() for keyword in ['_USDT', '/USDT']) and markets[s].get('type') in ['swap', 'future']]
             
             if not futures_symbols:
-                # 모든 USDT 페어를 대상으로 사용
                 futures_symbols = usdt_symbols[:50]  # 상위 50개만 사용
                 print(f"Using top {len(futures_symbols)} USDT pairs as futures contracts")
 
@@ -132,7 +126,7 @@ async def monitor():
         if not watchlist:
             print("No symbols in watchlist")
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
-                                 text="📝 Watchlist is empty. Add symbols using the bot!")
+                                 text="📝 Watchlist is empty. Add symbols to watchlist.json!")
             return
 
         print(f"Monitoring {len(watchlist)} symbols from watchlist...")
@@ -145,14 +139,23 @@ async def monitor():
                 
                 # 심볼이 실제로 존재하는지 확인
                 if symbol not in markets:
-                    print(f"Warning: {symbol} not found in MEXC markets")
                     # 대체 심볼 형태 시도
-                    alt_symbol = symbol.replace('-USDT-SWAP', '/USDT').replace('-USDT', '/USDT')
+                    alt_symbol = symbol.replace('/USDT', '_USDT').replace('-USDT-SWAP', '/USDT')
                     if alt_symbol in markets:
+                        print(f"Using alternative symbol format: {alt_symbol}")
                         symbol = alt_symbol
-                        print(f"Using alternative symbol format: {symbol}")
                     else:
+                        print(f"Warning: {symbol} not found in MEXC markets")
+                        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
+                                             text=f"❌ {symbol} is not a valid MEXC futures symbol")
                         continue
+                
+                # 선물 마켓인지 확인
+                if markets[symbol].get('type') != 'swap':
+                    print(f"Warning: {symbol} is not a futures contract")
+                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
+                                         text=f"❌ {symbol} is not a futures contract")
+                    continue
                 
                 # 1시간봉 데이터 (1% 음봉 감지)
                 try:
@@ -168,7 +171,7 @@ async def monitor():
                     print(f"{symbol} 1h change: {change_percent_1h:.2f}%")
                     
                     if change_percent_1h <= -1:
-                        ticker = symbol.split('/')[0] if '/' in symbol else symbol.split('-')[0]
+                        ticker = symbol.split('/')[0] if '/' in symbol else symbol.split('_')[0]
                         message = f"🔴 MEXC Alert: {ticker}\n📉 1h drop: {abs(change_percent_1h):.2f}%\n💰 Price: ${current_close_1h:.6f}"
                         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
                         print(f"Sent 1h drop alert: {message}")
@@ -189,7 +192,7 @@ async def monitor():
                     
                     # 이전 캔들이 음봉이고 현재 가격이 이전 고점을 돌파했는지 확인
                     if prev_close_30m < prev_open_30m and current_close_30m > prev_high_30m:
-                        ticker = symbol.split('/')[0] if '/' in symbol else symbol.split('-')[0]
+                        ticker = symbol.split('/')[0] if '/' in symbol else symbol.split('_')[0]
                         message = f"🟢 MEXC Alert: {ticker}\n📈 30m breakout above bearish high\n💰 Broke: ${prev_high_30m:.6f}\n💰 Current: ${current_close_30m:.6f}"
                         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
                         print(f"Sent breakout alert: {message}")
@@ -199,7 +202,7 @@ async def monitor():
                 await asyncio.sleep(0.5)  # API 레이트 리미트 방지
 
             except Exception as e:
-                ticker = symbol.split('/')[0] if '/' in symbol else symbol.split('-')[0]
+                ticker = symbol.split('/')[0] if '/' in symbol else symbol.split('_')[0]
                 error_msg = f"❌ Error processing {ticker}: {str(e)}"
                 print(error_msg)
                 # 에러가 너무 많으면 텔레그램 스팸 방지
