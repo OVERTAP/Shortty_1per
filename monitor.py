@@ -26,8 +26,10 @@ exchange = ccxt.mexc({
 # 텔레그램 봇 설정
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
-# 관심 종목 저장 파일
+# 파일 경로
 WATCHLIST_FILE = "watchlist.json"
+PRICES_FILE = "prices.json"
+FIRST_RUN_FILE = "is_first_run.json"
 
 # 관심 종목 로드
 def load_watchlist():
@@ -42,6 +44,46 @@ def load_watchlist():
     except json.JSONDecodeError as e:
         print(f"Error decoding {WATCHLIST_FILE}: {e}")
         return []
+
+# 가격 데이터 로드
+def load_prices():
+    try:
+        with open(PRICES_FILE, 'r') as f:
+            prices = json.load(f)
+            print(f"Loaded prices: {prices}")
+            return prices
+    except FileNotFoundError:
+        print(f"Error: {PRICES_FILE} not found")
+        return {}
+    except json.JSONDecodeError as e:
+        print(f"Error decoding {PRICES_FILE}: {e}")
+        return {}
+
+# 가격 데이터 저장
+def save_prices(prices):
+    try:
+        with open(PRICES_FILE, 'w') as f:
+            json.dump(prices, f, indent=2)
+        print(f"Saved prices: {prices}")
+    except Exception as e:
+        print(f"Error saving {PRICES_FILE}: {e}")
+
+# 최초 실행 여부 확인 및 업데이트
+def check_first_run():
+    try:
+        with open(FIRST_RUN_FILE, 'r') as f:
+            data = json.load(f)
+            return data.get("is_first_run", True)
+    except FileNotFoundError:
+        return True
+
+def update_first_run():
+    try:
+        with open(FIRST_RUN_FILE, 'w') as f:
+            json.dump({"is_first_run": False}, f, indent=2)
+        print("Updated first run status to False")
+    except Exception as e:
+        print(f"Error updating {FIRST_RUN_FILE}: {e}")
 
 async def monitor():
     try:
@@ -61,7 +103,7 @@ async def monitor():
                 })
                 markets = exchange_public.load_markets()
                 print(f"Successfully loaded {len(markets)} markets (public access)")
-                exchange = exchange_public  # 공개 접근으로 교체
+                exchange = exchange_public
             except Exception as e2:
                 print(f"Failed to load markets even with public access: {e2}")
                 await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
@@ -165,10 +207,26 @@ async def monitor():
                                  text="📝 Watchlist is empty. Add symbols to watchlist.json!")
             return
 
-        print(f"Monitoring {len(watchlist)} symbols from watchlist...")
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
-                             text=f"🔍 Starting to monitor {len(watchlist)} symbols on MEXC...")
+        # 최초 실행 여부 확인
+        is_first_run = check_first_run()
+        if is_first_run:
+            print("This is the first run. Sending watchlist to Telegram...")
+            formatted_watchlist = [s.replace('_USDT', ':USDT') for s in watchlist]
+            message = f"🔍 Watchlist symbols ({len(watchlist)}):\n"
+            message += '\n'.join([', '.join(formatted_watchlist[i:i+5]) for i in range(0, len(formatted_watchlist), 5)])
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+            update_first_run()
 
+        print(f"Monitoring {len(watchlist)} symbols from watchlist...")
+
+        # 이전 가격 로드
+        previous_prices = load_prices()
+        current_prices = {}
+
+        # 가격 비교 및 알림
+        has_drops = False
+        drop_message = "🔴 MEXC Price Drop Alerts:\n"
+        
         for symbol in watchlist:
             try:
                 print(f"Checking {symbol} on MEXC...")
@@ -176,15 +234,12 @@ async def monitor():
                 # 심볼이 실제로 존재하는지 확인
                 selected_symbol = symbol
                 if symbol not in markets:
-                    # 대체 심볼 형태 시도
                     alt_symbol = symbol.replace('/USDT', '_USDT').replace('-USDT-SWAP', '_USDT')
                     if alt_symbol in markets:
                         print(f"Using alternative symbol format: {alt_symbol}")
                         selected_symbol = alt_symbol
                     else:
                         print(f"Warning: {symbol} not found in MEXC markets")
-                        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
-                                             text=f"❌ {symbol} is not a valid MEXC futures symbol")
                         continue
                 
                 # 선물 마켓인지 확인
@@ -192,65 +247,47 @@ async def monitor():
                 print(f"Symbol {selected_symbol}: type={market.get('type')}, active={market.get('active', True)}")
                 if market.get('type') != 'swap':
                     print(f"Warning: {selected_symbol} is not a futures contract")
-                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
-                                         text=f"❌ {selected_symbol} is not a futures contract")
                     continue
                 
-                # 1시간봉 데이터 (1% 음봉 감지)
-                try:
-                    ohlcv_1h = exchange.fetch_ohlcv(selected_symbol, timeframe='1h', limit=2)
-                    if len(ohlcv_1h) < 2:
-                        print(f"Not enough 1h data for {selected_symbol}")
-                        continue
-                        
-                    prev_close_1h = ohlcv_1h[-2][4]
-                    current_close_1h = ohlcv_1h[-1][4]
-                    change_percent_1h = ((current_close_1h - prev_close_1h) / prev_close_1h) * 100
-                    
-                    print(f"{selected_symbol} 1h change: {change_percent_1h:.2f}%")
-                    
-                    if change_percent_1h <= -1:
-                        ticker = selected_symbol.split('/')[0] if '/' in selected_symbol else selected_symbol.split('_')[0]
-                        message = f"🔴 MEXC Alert: {ticker}\n📉 1h drop: {abs(change_percent_1h):.2f}%\n💰 Price: ${current_close_1h:.6f}"
-                        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
-                        print(f"Sent 1h drop alert: {message}")
-                except Exception as e:
-                    print(f"Error fetching 1h data for {selected_symbol}: {e}")
+                # 현재 가격 가져오기
+                ticker = exchange.fetch_ticker(selected_symbol)
+                current_price = ticker.get('last')
+                if not current_price:
+                    print(f"No last price available for {selected_symbol}")
+                    continue
+                
+                current_prices[selected_symbol] = current_price
+                print(f"Current price for {selected_symbol}: ${current_price:.6f}")
 
-                # 30분봉 데이터 (이전 음봉 고점 돌파 감지)
-                try:
-                    ohlcv_30m = exchange.fetch_ohlcv(selected_symbol, timeframe='30m', limit=2)
-                    if len(ohlcv_30m) < 2:
-                        print(f"Not enough 30m data for {selected_symbol}")
-                        continue
-                        
-                    prev_open_30m = ohlcv_30m[-2][1]
-                    prev_close_30m = ohlcv_30m[-2][4]
-                    prev_high_30m = ohlcv_30m[-2][2]
-                    current_close_30m = ohlcv_30m[-1][4]
+                # 이전 가격과 비교
+                previous_price = previous_prices.get(selected_symbol)
+                if previous_price is not None:
+                    change_percent = ((current_price - previous_price) / previous_price) * 100
+                    print(f"{selected_symbol} price change: {change_percent:.2f}%")
                     
-                    # 이전 캔들이 음봉이고 현재 가격이 이전 고점을 돌파했는지 확인
-                    if prev_close_30m < prev_open_30m and current_close_30m > prev_high_30m:
-                        ticker = selected_symbol.split('/')[0] if '/' in selected_symbol else selected_symbol.split('_')[0]
-                        message = f"🟢 MEXC Alert: {ticker}\n📈 30m breakout above bearish high\n💰 Broke: ${prev_high_30m:.6f}\n💰 Current: ${current_close_30m:.6f}"
-                        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
-                        print(f"Sent breakout alert: {message}")
-                except Exception as e:
-                    print(f"Error fetching 30m data for {selected_symbol}: {e}")
-
+                    if change_percent <= -1:  # 1% 이상 하락
+                        ticker_name = selected_symbol.split('/')[0] if '/' in selected_symbol else selected_symbol.split('_')[0]
+                        drop_message += f"📉 {ticker_name}: {abs(change_percent):.2f}% drop\n"
+                        drop_message += f"💰 Previous: ${previous_price:.6f}\n"
+                        drop_message += f"💰 Current: ${current_price:.6f}\n\n"
+                        has_drops = True
+                
                 await asyncio.sleep(0.5)  # API 레이트 리미트 방지
 
             except Exception as e:
                 ticker = symbol.split('/')[0] if '/' in symbol else symbol.split('_')[0]
                 error_msg = f"❌ Error processing {ticker}: {str(e)}"
                 print(error_msg)
-                # 에러가 너무 많으면 텔레그램 스팸 방지
-                if "not found" not in str(e).lower():
-                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=error_msg)
+
+        # 가격 저장
+        save_prices(current_prices)
+
+        # 1% 이상 하락한 종목이 있으면 메시지 전송
+        if has_drops:
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=drop_message.strip())
+            print("Sent price drop alerts to Telegram")
 
         print("MEXC monitoring cycle completed")
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, 
-                             text="✅ MEXC monitoring cycle completed successfully")
 
     except Exception as e:
         error_msg = f"💥 Critical error in MEXC monitor: {str(e)}"
