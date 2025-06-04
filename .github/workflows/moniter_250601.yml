@@ -8,6 +8,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }}  # PAT 사용
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
